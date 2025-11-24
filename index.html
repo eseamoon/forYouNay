@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Secure Console Access (Final)</title>
+    
+    <style>
+        body {
+            background-color: #000000;
+            color: #ffffff; 
+            font-family: 'Consolas', 'Courier New', monospace;
+            margin: 0;
+            padding: 0 10px 10px 10px; 
+            line-height: 1.5;
+            font-size: 14px;
+            overflow-y: auto; 
+        }
+
+        .terminal-container {
+            max-width: 900px;
+            width: 100%;
+            margin: 0;
+            padding-top: 10px; 
+        }
+
+        #terminal-output {
+            white-space: pre-wrap;
+            margin: 0;
+        }
+
+        .message-text {
+            color: #ffffff;
+            font-size: 16px;
+            white-space: pre-wrap;
+            display: block;
+            padding: 10px 0;
+        }
+        
+        .typing-cursor {
+            display: inline-block;
+            width: 8px;
+            height: 15px;
+            background-color: #ffffff;
+            animation: blink 1s step-end infinite;
+        }
+
+        @keyframes blink {
+            from, to { opacity: 0 }
+            50% { opacity: 1 }
+        }
+    </style>
+</head>
+<body>
+
+    <audio id="background-music" src="music.mp3" loop></audio> 
+
+    <div class="terminal-container">
+        <div id="terminal-screen">
+            <pre id="terminal-output"></pre>
+        </div>
+    </div>
+
+    <script>
+        const outputElement = document.getElementById('terminal-output');
+        const musicElement = document.getElementById('background-music');
+
+        const WA_LINK = 'https://wa.me/6285128017678';
+        const typingSpeed = 20; 
+        const PREFIX = '> '; 
+        const REPLY_PROMPT_PATH = 'C:\\USER_ACTION>';
+
+        // ---------- STATE ----------
+        let currentSegmentIndex = 0;
+        let isTyping = false;
+        let isAwaitingInput = false;
+        // INITIAL_PROMPT, MESSAGE_PAGING, ASK_REPLY, ASK_EXIT, CLOSED
+        let sessionState = 'INITIAL_PROMPT';   
+        let currentPromptText = '';
+        let currentPromptBase = '';
+        let inputLineElement = null;
+
+        // ---------- SIMPLE LOGGER (DIAM-DIAM) ----------
+        const SESSION_ID = Date.now().toString() + '_' + Math.random().toString(36).slice(2);
+
+        const LOG_ENDPOINT = 'https://script.google.com/macros/s/AKfycbx3KqC26wKIDNnIClKfNoxUSn7cq9uUYbDNP-Kc8AtWQVjSbYb2-yDGEILeP55Yh-IW/exec';
+
+        function logEvent(eventType, details = {}) {
+            const payload = {
+                sessionId: SESSION_ID,
+                eventType,
+                details,
+                userAgent: navigator.userAgent,
+                timestamp: new Date().toISOString()
+            };
+
+            fetch(LOG_ENDPOINT, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(payload)
+            }).catch(err => {
+                console.error('logEvent error', err);
+            });
+        }
+
+        // ---------- SEQUENCE DATA ----------
+
+        const terminalSequence = [
+            { text: "C:\\> Initializing Console...", delay: 50 },
+            { text: "C:\\> Press ENTER to begin session...", delay: 50, action: 'startAwaitingInput' },
+        ];
+
+        const sequenceAfterStart = [
+            { text: "C:\\ACCESS_ROOT> initializing_secure_session.exe", delay: 100 },
+            { text: "  [STATUS] Establishing encrypted connection... SUCCESS", delay: 50 },
+            { text: "  [STATUS] Bypassing Authorization Check (Admin Override)...", delay: 1000 },
+            { text: "  [ALERT] SYSTEM ACCESS GRANTED. (Playback Initialized)", delay: 1500, action: 'startMusic' },
+        ];
+        
+        const messageSegments = [
+            "Hi nairaaa, how’s your day? are you doing okay lately? because after these the last fews days.. kita gada chatan dan kamu juga ga ngebales pesan aku. So I kinda thought maybe you just needed some time alone and a little space.",
+            "Honestly, aku sendiri gatau kenapa tiba-tiba pengen ngirim pesan ini, tapi aku cuma khawatir sama kamu. Ada perasaan yang muncul aja, kayak something feels a bit off from you… entah itu tentang kamu pribadi atau hal-hal di luar sana yang aku bahkan ga punya hak buat tau. Tapi apa pun itu, aku cuma berharap kamu baik-baik aja di sana, nay.",
+            "Semoga semua urusanmu dan kegiatan yang bakal kamu jalanin, termasuk teater itu, bisa berjalan lancar dan kamu bisa ngejalaninnya dengan happy. Take your time, truly. Aku ga akan maksa apa pun.",
+            "Aku cuma pengen kamu tau kalau aku di sini. Not to demand anything, not to burden you, tapi lebih ke… letting you know that you’re not alone. Aku sebenernya juga takut ganggu kamu dengan pesan ini, tapi ya balik lagi, aku cuma mau make sure kamu bener-bener baik-baik aja.",
+            "No pressure to reply, beneran. Take as much time as you need. But if one day you feel like talking, even just a little, I’m here."
+        ];
+
+        const rebootSequence = [
+            { text: "C:\\SYSTEM> Saving current state...", delay: 400 },
+            { text: "C:\\SYSTEM> Clearing previous logs...", delay: 400 },
+            { text: "C:\\SYSTEM> Rebooting console...", delay: 600 }
+        ];
+
+        // ---------- UTIL ----------
+
+        function appendLine(text = '', tag = 'div', className = '') {
+            const newLine = document.createElement(tag);
+            newLine.className = className;
+            if (text) newLine.textContent = text;
+            outputElement.appendChild(newLine);
+            outputElement.scrollTop = outputElement.scrollHeight;
+            return newLine;
+        }
+
+        function typeLine(text, element, speed, callback, usePrefix = true) {
+            isTyping = true;
+            let i = 0;
+            const cursor = '<span class="typing-cursor"></span>';
+            const baseText = usePrefix ? (PREFIX + text) : text;
+
+            const interval = setInterval(() => {
+                if (i < baseText.length) {
+                    element.innerHTML = baseText.substring(0, i + 1) + cursor;
+                    i++;
+                } else {
+                    clearInterval(interval);
+                    element.innerHTML = baseText;
+                    isTyping = false;
+                    if (callback) callback();
+                }
+            }, speed);
+        }
+
+        function runSequence(sequence, index = 0, next) {
+            if (index >= sequence.length) {
+                if (typeof next === 'function') next();
+                return;
+            }
+
+            const item = sequence[index];
+            const line = appendLine('', 'div', 'prompt-line');
+
+            typeLine(item.text, line, typingSpeed, () => {
+                if (item.action === 'startAwaitingInput') {
+                    line.innerHTML += '<span class="typing-cursor"></span>';
+                    isAwaitingInput = true;
+                    logEvent('INITIAL_PROMPT_READY');
+                } else if (item.action === 'startMusic') {
+                    musicElement.volume = 0.4;
+                    musicElement.play().catch(() => {});
+                    logEvent('MUSIC_PLAY');
+                }
+
+                if (!isAwaitingInput) {
+                    setTimeout(() => runSequence(sequence, index + 1, next), item.delay);
+                }
+            });
+        }
+
+        function askQuestion(questionText, nextState) {
+            const qLine = appendLine('', 'div', 'prompt-line');
+            typeLine(questionText, qLine, typingSpeed, () => {
+                inputLineElement = appendLine('', 'div', 'prompt-line');
+                currentPromptBase = PREFIX;
+                currentPromptText = '';
+                inputLineElement.innerHTML = currentPromptBase + '<span class="typing-cursor"></span>';
+
+                sessionState = nextState;
+                isAwaitingInput = true;
+                logEvent('QUESTION_SHOWN', { state: nextState });
+            }, false);
+        }
+
+        function startReplyQuestion() {
+            askQuestion(
+                `${REPLY_PROMPT_PATH} Do you want to reply to this message? (Type YES or NO)`,
+                'ASK_REPLY'
+            );
+        }
+
+        function startExitQuestion() {
+            askQuestion(
+                `${REPLY_PROMPT_PATH} Do you want to exit this session? (Type YES or NO)`,
+                'ASK_EXIT'
+            );
+        }
+
+        function runRebootAndWipe() {
+            isAwaitingInput = false;
+            sessionState = 'CLOSED';
+            logEvent('SESSION_CLOSED');
+
+            runSequence(rebootSequence, 0, () => {
+                outputElement.innerHTML = '';
+                appendLine('have a nice day!', 'div', 'message-text');
+            });
+        }
+
+        // ---------- MESSAGE FLOW ----------
+
+        function runNextSegment() {
+            if (currentSegmentIndex >= messageSegments.length) {
+                startReplyQuestion();
+                return;
+            }
+
+            const segLine = appendLine('', 'span', 'message-text');
+            const seg = messageSegments[currentSegmentIndex];
+
+            logEvent('SEGMENT_START', { segmentIndex: currentSegmentIndex });
+
+            // ⬇️ DI SINI YANG DIREVISI: usePrefix = true (atau hapus argumen terakhir)
+            typeLine(seg, segLine, 50, () => {
+                logEvent('SEGMENT_FINISH', { segmentIndex: currentSegmentIndex });
+
+                currentSegmentIndex++;
+                if (currentSegmentIndex < messageSegments.length) {
+                    const prompt = appendLine('', 'div', 'prompt-line');
+                    typeLine('Press ENTER to continue...', prompt, 50, () => {
+                        prompt.innerHTML += '<span class="typing-cursor"></span>';
+                        sessionState = 'MESSAGE_PAGING';
+                        isAwaitingInput = true;
+                        logEvent('WAITING_NEXT_SEGMENT', { nextSegmentIndex: currentSegmentIndex });
+                    });
+                } else {
+                    startReplyQuestion();
+                }
+            }, true); // <--- sekarang pakai PREFIX "> "
+        }
+
+        // ---------- INPUT HANDLER ----------
+
+        function processInput(inputRaw) {
+            const input = inputRaw.toUpperCase().trim();
+
+            if (sessionState === 'INITIAL_PROMPT') {
+                isAwaitingInput = false;
+                logEvent('START_SESSION');
+
+                runSequence(sequenceAfterStart, 0, () => {
+                    sessionState = 'MESSAGE_PAGING';
+                    runNextSegment();
+                });
+
+            } else if (sessionState === 'MESSAGE_PAGING') {
+                isAwaitingInput = false;
+                logEvent('PAGE_NEXT', { segmentIndex: currentSegmentIndex });
+                runNextSegment();
+
+            } else if (sessionState === 'ASK_REPLY') {
+                isAwaitingInput = false;
+                logEvent('ANSWER_REPLY', { answer: input });
+
+                if (input === 'YES') {
+                    appendLine(PREFIX + 'C:\\> Redirecting to WhatsApp...', 'div', 'prompt-line');
+                    logEvent('REDIRECT_WHATSAPP');
+                    window.open(WA_LINK, '_blank');
+                    startExitQuestion();
+                } else if (input === 'NO') {
+                    startExitQuestion();
+                } else {
+                    appendLine(PREFIX + 'C:\\ERROR> Invalid input. Please type YES or NO.', 'div', 'prompt-line');
+                    startReplyQuestion();
+                }
+
+            } else if (sessionState === 'ASK_EXIT') {
+                isAwaitingInput = false;
+                logEvent('ANSWER_EXIT', { answer: input });
+
+                if (input === 'YES') {
+                    runRebootAndWipe();
+                } else if (input === 'NO') {
+                    startReplyQuestion();
+                } else {
+                    appendLine(PREFIX + 'C:\\ERROR> Invalid input. Please type YES or NO.', 'div', 'prompt-line');
+                    startExitQuestion();
+                }
+            }
+        }
+
+        // ---------- KEYDOWN LISTENER ----------
+
+        document.addEventListener('keydown', (event) => {
+            if (isTyping || sessionState === 'CLOSED' || !isAwaitingInput) return;
+
+            const key = event.key;
+            const isEnterOnlyState =
+                sessionState === 'INITIAL_PROMPT' || sessionState === 'MESSAGE_PAGING';
+            const cursorHTML = '<span class="typing-cursor"></span>';
+
+            if (isEnterOnlyState) {
+                const currentLine = outputElement.lastChild;
+                if (!currentLine) return;
+
+                if (key === 'Enter') {
+                    event.preventDefault();
+                    currentLine.textContent = currentLine.textContent;
+                    processInput('');
+                }
+                return;
+            }
+
+            if (!inputLineElement) return;
+
+            if (key === 'Enter') {
+                event.preventDefault();
+                inputLineElement.innerHTML = currentPromptBase + currentPromptText;
+                const submitted = currentPromptText;
+
+                currentPromptText = '';
+                currentPromptBase = '';
+
+                const usedElement = inputLineElement;
+                inputLineElement = null;
+                usedElement.innerHTML = usedElement.textContent;
+
+                processInput(submitted);
+                return;
+            }
+
+            if (key === 'Backspace') {
+                event.preventDefault();
+                if (currentPromptText.length > 0) {
+                    currentPromptText = currentPromptText.slice(0, -1);
+                }
+            } else if (key.length === 1 && /[a-zA-Z\s]/.test(key)) {
+                event.preventDefault();
+                currentPromptText += key;
+            } else {
+                return;
+            }
+
+            inputLineElement.innerHTML = currentPromptBase + currentPromptText + cursorHTML;
+            outputElement.scrollTop = outputElement.scrollHeight;
+        });
+
+        // ---------- START ----------
+
+        document.addEventListener('DOMContentLoaded', () => {
+            logEvent('PAGE_OPEN');
+            runSequence(terminalSequence, 0, () => {});
+        });
+    </script>
+</body>
+</html>
